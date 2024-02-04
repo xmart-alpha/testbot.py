@@ -1,0 +1,98 @@
+!pip install ccxt
+import numpy as np
+import ccxt
+import pandas as pd
+import matplotlib.pyplot as plt
+
+#to get candle data
+def get_data(symbol, tf, Limit):
+  get = ccxt.bingx()
+  ohlcv = get.fetchOHLCV(symbol, tf, limit=Limit)
+  df = pd.DataFrame(ohlcv, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume'])
+  df['Time'] = pd.to_datetime(df['Time'], unit='ms')
+  df.set_index('Time', inplace=True)
+  return df
+
+#always change intv to change candleclose interval
+intv = '15m'
+
+#change tikker symbol here to  get data
+data = get_data('BTC/USDT', intv, 500)
+
+True_Range = np.maximum(np.maximum(data.High - data.Low, np.abs(data.High - np.roll(data.Low, 1))), np.abs(data.Low - np.roll(data.Low, 1)))
+
+# Rma Function that retuns an array
+def rma_tv(source: np.array, length: int,) -> np.array:
+
+    alpha = 1 / length
+
+    starting_index = source[np.isnan(source)].size + length
+
+    rma = np.full_like(source, np.nan)
+    rma[starting_index - 1] = source[starting_index - length : starting_index].mean()
+
+    for i in range(starting_index, source.size):
+        rma[i] = alpha * source[i] + (1 - alpha) * rma[i - 1]
+
+    return rma
+
+#function for ATR
+def atr(length: int) -> np.array:
+  atr_val = rma_tv(True_Range, length=length)
+  return atr_val
+
+  def chandelier_exit(data):
+  atr_length= 22
+  atr1 = 3 * atr(22)
+
+  highest_high = data['Close'].rolling(atr_length).max()
+  lowest_low = data['Close'].rolling(atr_length).min()
+
+  long_stop = highest_high.shift(1) - atr1
+  short_stop = lowest_low.shift(1) + atr1
+
+  longStopPrev = long_stop[-1] or long_stop
+  shortStopPrev = short_stop[-1] or short_stop
+
+#####
+  if data.Close[-2] < longStopPrev:
+    long_stop = np.maximum(long_stop, longStopPrev)
+
+  else:
+    long_stop = long_stop
+
+  if data.Close[-2] >  shortStopPrev:
+    short_stop = np.minimum(short_stop, shortStopPrev)
+  else:
+    short_stop = short_stop
+
+    return long_stop, short_stop
+
+
+    # Calculate Chandelier Exit
+    long_stop, short_stop = chandelier_exit(data)
+    ###
+    chandelier_exit(data)
+    dir = pd.Series(index=data.index)
+    dir[data['Close'] > short_stop.shift(1)] = 1
+    dir[data['Close'] < long_stop.shift(1)] = -1
+    dir = dir.ffill().fillna(1)    
+
+    buy_signal = (dir == 1) & (dir.shift(1) == -1)
+    sell_signal = (dir == -1) & (dir.shift(1) == 1)
+    #testing 
+    from os import name
+    
+    # Plotting
+    plt.figure(figsize=(10, 6))
+    plt.plot(data['Close'], label='Close Price', linewidth=2)
+    plt.plot(dir[dir == -1].index, short_stop[dir == -1], linestyle='dashed', color='red', label='short_stop')
+    plt.plot(dir[dir == 1].index, long_stop[dir == 1], linestyle='dashed', color='green', label='Long Stop')
+    #buy signal
+    plt.scatter(data.index[buy_signal], long_stop[buy_signal], marker='^', color='green', label='Buy Signal')
+    #Sell signal
+    plt.scatter(data.index[sell_signal], short_stop[sell_signal], marker='v', color='red', label='Sell Signal')
+    ##
+    plt.title('Chandelier Exit Indicator')
+    plt.legend()
+    plt.show()
